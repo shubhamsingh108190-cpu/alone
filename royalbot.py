@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import asyncio
 import json
 import os
@@ -440,4 +439,5 @@ async def main() -> None:
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
