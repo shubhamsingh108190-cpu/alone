@@ -23,13 +23,14 @@ FAIRBID_DELAY = float(os.getenv("FAIRBID_DELAY", "0"))
 GLOBAL_CONCURRENCY = int(os.getenv("GLOBAL_CONCURRENCY", "3"))
 SEMAPHORE = asyncio.Semaphore(GLOBAL_CONCURRENCY)
 
-# Telegram (fallback to env, no defaults — fail fast if missing)
+# Telegram (fail-fast if missing)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     raise RuntimeError("❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in env")
 
 # ================= ACCOUNTS =================
+# Trailing spaces manually removed from URLs below.
 ACCOUNTS = [
     {
         "NAME": "cashthug",
@@ -132,7 +133,7 @@ async def create_client() -> httpx.AsyncClient:
     )
 
 async def load_config(client: httpx.AsyncClient, url: str) -> Dict[str, Any]:
-    r = await client.get(url)
+    r = await client.get(url.strip())
     r.raise_for_status()
     j = r.json()
     return {
@@ -145,8 +146,8 @@ async def get_id_token(
     firebase_key: str,
     refresh_token: str
 ) -> tuple[str, str, int]:
-    # ✅ NO SPACE after = in URL
-    url = f"https://securetoken.googleapis.com/v1/token?key={firebase_key}"
+    # ✅ FIXED: NO SPACE in key=
+    url = f"https://securetoken.googleapis.com/v1/token?key={firebase_key.strip()}"
     r = await client.post(
         url,
         data={"grant_type": "refresh_token", "refresh_token": refresh_token},
@@ -176,7 +177,7 @@ class TokenManager:
                         options={"verify_signature": False}
                     )
                     exp = payload.get("exp", 0)
-                    if exp > now + 120:
+                    if exp > now + 120:  # refresh 2 mins before expiry
                         needs_refresh = False
                 except Exception:
                     pass
@@ -237,8 +238,7 @@ async def get_super_offer(
     project_id: str,
     uid: str
 ) -> Optional[Dict[str, Any]]:
-    # ✅ FIXED: NO SPACE in project_id — was " {project_id}" before
-    url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/users/{uid}:runQuery"
+    url = f"https://firestore.googleapis.com/v1/projects/{project_id.strip()}/databases/(default)/documents/users/{uid.strip()}:runQuery"
     query = {
         "structuredQuery": {
             "from": [{"collectionId": "superOffers"}],
@@ -268,8 +268,7 @@ async def get_boosts(
     project_id: str,
     uid: str
 ) -> int:
-    # ✅ FIXED: NO SPACE before project_id
-    url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases/(default)/documents/users/{uid}?mask.fieldPaths=boosts"
+    url = f"https://firestore.googleapis.com/v1/projects/{project_id.strip()}/databases/(default)/documents/users/{uid.strip()}?mask.fieldPaths=boosts"
     r = await call_with_auth_retry(client, "get", url, token)
     doc = r.json()
     return int(doc.get("fields", {}).get("boosts", {}).get("integerValue", 0))
@@ -277,7 +276,7 @@ async def get_boosts(
 async def run_fairbid(client: httpx.AsyncClient, acc: Dict[str, Any], cfg: Dict[str, Any]) -> None:
     async with SEMAPHORE:
         try:
-            url = f"{acc['BASE_URL']}?spotId={acc['SPOT_ID']}"
+            url = f"{acc['BASE_URL'].strip()}?spotId={acc['SPOT_ID']}"
             r = await client.post(url, content=cfg["payload"], timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
             text = r.text
@@ -308,9 +307,35 @@ async def call_fn(
     name: str,
     offer_id: str
 ) -> Dict[str, Any]:
-    url = f"https://us-central1-{project_id}.cloudfunctions.net/{name}"
+    url = f"https://us-central1-{project_id.strip()}.cloudfunctions.net/{name}"
     r = await call_with_auth_retry(client, "post", url, token, json=encrypt_offer(offer_id))
     return r.json()
+
+# ================= HEALTH CHECK SERVER =================
+import aiohttp
+from aiohttp import web
+
+START_TIME = time.time()
+
+async def health_check(request):
+    uptime = time.time() - START_TIME
+    return web.json_response({
+        "status": "ok",
+        "uptime_seconds": round(uptime, 2),
+        "accounts": len(ACCOUNTS),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/health", health_check)
+    app.router.add_get("/", health_check)
+    port = int(os.getenv("PORT", "8000"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log("SYSTEM", f"🌐 Health server running on port {port}")
 
 # ================= MAIN LOOP PER ACCOUNT =================
 async def bot_loop(acc: Dict[str, Any]) -> None:
@@ -396,7 +421,13 @@ async def main() -> None:
     log("SYSTEM", f"⚙️ Burst={FAIRBID_BURST}, Delay={FAIRBID_DELAY}, Concurrency={GLOBAL_CONCURRENCY}")
     log("SYSTEM", "✅ Telegram alerts enabled")
 
+    # 🧹 Sanitize URLs at startup (defense in depth)
+    for acc in ACCOUNTS:
+        acc["JSON_URL"] = acc["JSON_URL"].strip()
+        acc["BASE_URL"] = acc["BASE_URL"].strip()
+
     try:
+        await start_web_server()
         await send_telegram("🟢 <b>BOT STARTED</b>\nAll accounts initialized.")
         await asyncio.gather(*(bot_loop(acc) for acc in ACCOUNTS), return_exceptions=True)
     except KeyboardInterrupt:
