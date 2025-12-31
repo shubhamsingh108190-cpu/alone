@@ -333,7 +333,7 @@ async def start_web_server():
     port = int(os.getenv("PORT", "8001"))
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    site = web.TCPSite(runner, "0.0.0.1", port)
     await site.start()
     log("SYSTEM", f"🌐 Health server running on port {port}")
 
@@ -440,3 +440,4 @@ async def main() -> None:
 if __name__ == "__main__":
 
     asyncio.run(main())
+
