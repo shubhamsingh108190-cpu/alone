@@ -330,7 +330,7 @@ async def start_web_server():
     app = web.Application()
     app.router.add_get("/health", health_check)
     app.router.add_get("/", health_check)
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8001"))
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
@@ -438,4 +438,5 @@ async def main() -> None:
         log("SYSTEM", f"🔥 Fatal error: {e}")
 
 if __name__ == "__main__":
+
     asyncio.run(main())
