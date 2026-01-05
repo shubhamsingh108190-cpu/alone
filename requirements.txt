@@ -1,5 +1,0 @@
-aiohttp
-httpx
-PyJWT
-pycryptodome
-cryptography  # optional, for future-proofing JWT
